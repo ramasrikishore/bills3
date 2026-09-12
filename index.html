@@ -218,12 +218,11 @@
     </div>
 
     <div class="settings-note" style="margin-top:16px">
-      <strong>Owner WhatsApp:</strong> enter the owner's WhatsApp number below once. It is saved only in this browser.
-      Use country code, e.g. <strong>919535153478</strong> for an Indian number.
+      <strong>Owner WhatsApp:</strong> bills are sent to the fixed owner number below.
     </div>
     <div style="max-width:360px;margin-top:10px">
       <label>Owner WhatsApp Number</label>
-      <input id="ownerWhatsapp" inputmode="numeric" autocomplete="tel" placeholder="91XXXXXXXXXX">
+      <input id="ownerWhatsapp" inputmode="numeric" autocomplete="tel" value="7411768707" readonly>
       <div class="hint">The app opens WhatsApp with the complete bill message pre-filled. You then tap Send.</div>
     </div>
 
@@ -243,6 +242,7 @@
 </div>
 
 <script>
+const OWNER_WHATSAPP = "7411768707";
 const money = n => "₹" + Number(n || 0).toLocaleString("en-IN", {minimumFractionDigits:2, maximumFractionDigits:2});
 let generatedBill = null;
 
@@ -333,7 +333,6 @@ function generateBill() {
     customerPhone: document.getElementById("customerPhone").value.trim(),
     items, discountPct, subtotal, discountAmount, total: subtotal-discountAmount
   };
-  localStorage.setItem("sidhi_owner_whatsapp", document.getElementById("ownerWhatsapp").value.trim());
   renderBill();
   document.getElementById("billPreview").scrollIntoView({behavior:"smooth"});
 }
@@ -390,11 +389,7 @@ function whatsappMessage() {
 }
 function sendWhatsApp() {
   if (!generatedBill) return;
-  const raw = document.getElementById("ownerWhatsapp").value.trim() || localStorage.getItem("sidhi_owner_whatsapp") || "";
-  const phone = raw.replace(/\D/g,"");
-  if (!phone) { alert("Please enter the owner's WhatsApp number first."); return; }
-  localStorage.setItem("sidhi_owner_whatsapp", phone);
-  const url = "https://wa.me/" + phone + "?text=" + encodeURIComponent(whatsappMessage());
+  const url = "https://wa.me/" + OWNER_WHATSAPP + "?text=" + encodeURIComponent(whatsappMessage());
   window.open(url, "_blank");
 }
 function clearItems() {
@@ -412,7 +407,7 @@ function newBill() {
   setHeader(); addItem();
   window.scrollTo({top:0,behavior:"smooth"});
 }
-document.getElementById("ownerWhatsapp").value = localStorage.getItem("sidhi_owner_whatsapp") || "";
+document.getElementById("ownerWhatsapp").value = OWNER_WHATSAPP;
 setHeader();
 addItem();
 </script>
