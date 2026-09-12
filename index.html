@@ -172,6 +172,10 @@
         <input id="customerPhone" inputmode="tel" placeholder="Phone number">
       </div>
       <div>
+        <label>Cashier</label>
+        <input id="cashier" placeholder="Cashier name" required autocomplete="name">
+      </div>
+      <div>
         <label>Bill Number</label>
         <input id="billNo" readonly>
       </div>
@@ -234,17 +238,21 @@
   <section class="card" id="billPreview">
     <div id="billContent"></div>
     <div class="actions no-print">
-      <button class="whatsapp" onclick="sendWhatsApp()">Send Bill to Owner via WhatsApp</button>
+      <button id="sendBillButton" class="whatsapp" onclick="sendWhatsApp()">Save to Sheets &amp; Send WhatsApp</button>
       <button class="secondary" onclick="window.print()">Print / Save as PDF</button>
       <button class="primary" onclick="newBill()">New Bill</button>
     </div>
+    <div id="sendStatus" class="hint" role="status" aria-live="polite"></div>
   </section>
 </div>
 
 <script>
 const OWNER_WHATSAPP = "7411768707";
+// Replace this with the deployed Google Apps Script web-app URL.
+const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwrPc_XScqwngznJcTT00BRNroh-6SFxZkfz71hYcuMvSO-Lu_lzrarLblZIizqdWWr/exec";
 const money = n => "₹" + Number(n || 0).toLocaleString("en-IN", {minimumFractionDigits:2, maximumFractionDigits:2});
 let generatedBill = null;
+let isSending = false;
 
 function pad(n) { return String(n).padStart(2,"0"); }
 function nowText() {
@@ -309,19 +317,22 @@ function recalculate() {
   document.getElementById("grandTotal").textContent = money(subtotal-da);
 }
 function validate() {
+  const cashier = document.getElementById("cashier").value.trim();
+  if (!cashier) { alert("Enter Cashier name."); document.getElementById("cashier").focus(); return false; }
   const items = getItems().filter(x => x.code || x.desc || x.price || x.qty);
   if (!items.length) { alert("Please add at least one item."); return false; }
   for (const [i,x] of items.entries()) {
     if (!x.code) { alert(`Enter Product Code for item ${i+1}.`); return false; }
-    if (!(x.price >= 0)) { alert(`Enter a valid price for item ${i+1}.`); return false; }
-    if (!(x.qty > 0)) { alert(`Enter a quantity greater than 0 for item ${i+1}.`); return false; }
+    if (!Number.isFinite(x.price) || x.price < 0) { alert(`Enter a valid price for item ${i+1}.`); return false; }
+    if (!Number.isFinite(x.qty) || x.qty <= 0) { alert(`Enter a quantity greater than 0 for item ${i+1}.`); return false; }
   }
   const d = Number(document.getElementById("discount").value || 0);
-  if (d > 10) { alert("Maximum discount allowed is 10%."); return false; }
+  if (!Number.isFinite(d) || d < 0 || d > 10) { alert("Discount must be between 0% and 10%."); return false; }
   return true;
 }
 function generateBill() {
   if (!validate()) return;
+  const cashier = document.getElementById("cashier").value.trim();
   const items = getItems().filter(x => x.code || x.desc || x.price || x.qty);
   const discountPct = Number(document.getElementById("discount").value || 0);
   const subtotal = items.reduce((s,x)=>s+x.amount,0);
@@ -329,6 +340,7 @@ function generateBill() {
   generatedBill = {
     no: document.getElementById("billNo").value,
     date: document.getElementById("billDate").value,
+    cashier,
     customerName: document.getElementById("customerName").value.trim(),
     customerPhone: document.getElementById("customerPhone").value.trim(),
     items, discountPct, subtotal, discountAmount, total: subtotal-discountAmount
@@ -356,6 +368,7 @@ function renderBill() {
           <strong>TAX / SALES BILL</strong><br>
           Bill No: <strong>${esc(b.no)}</strong><br>
           Date: ${esc(b.date)}<br>
+          Cashier: ${esc(b.cashier)}<br>
           ${b.customerName ? "Customer: "+esc(b.customerName) : ""}
           ${b.customerPhone ? "<br>Phone: "+esc(b.customerPhone) : ""}
         </div>
@@ -377,7 +390,7 @@ function renderBill() {
 }
 function whatsappMessage() {
   const b = generatedBill;
-  let m = `*SIDHIVINAYAKA NURSERY*\nBill No: ${b.no}\nDate: ${b.date}`;
+  let m = `*SIDHIVINAYAKA NURSERY*\nBill No: ${b.no}\nDate: ${b.date}\nCashier: ${b.cashier}`;
   if (b.customerName) m += `\nCustomer: ${b.customerName}`;
   if (b.customerPhone) m += `\nPhone: ${b.customerPhone}`;
   m += `\n\n*ITEMS*`;
@@ -387,10 +400,50 @@ function whatsappMessage() {
   m += `\n\nSubtotal: ₹${b.subtotal.toFixed(2)}\nDiscount: ${b.discountPct}% (-₹${b.discountAmount.toFixed(2)})\n*NET TOTAL: ₹${b.total.toFixed(2)}*`;
   return m;
 }
-function sendWhatsApp() {
-  if (!generatedBill) return;
+function isGoogleSheetsConfigured() {
+  return GOOGLE_SCRIPT_URL && !GOOGLE_SCRIPT_URL.includes("YOUR_COPIED_WEB_APP_URL_HERE");
+}
+function setSendStatus(message, isError = false) {
+  const status = document.getElementById("sendStatus");
+  status.textContent = message;
+  status.style.color = isError ? "var(--danger)" : "#476056";
+}
+async function saveBillToGoogleSheets() {
+  if (!isGoogleSheetsConfigured()) {
+    setSendStatus("Google Sheets is not configured. WhatsApp can still be opened.", true);
+    return false;
+  }
+  const response = await fetch(GOOGLE_SCRIPT_URL, {
+    method: "POST",
+    mode: "no-cors",
+    headers: {"Content-Type": "text/plain;charset=utf-8"},
+    body: JSON.stringify({type: "bill", ...generatedBill})
+  });
+  // no-cors returns an opaque response, so Apps Script's HTTP status is unavailable.
+  return response.type === "opaque" || response.ok;
+}
+async function sendWhatsApp() {
+  if (!generatedBill || isSending) return;
+  isSending = true;
+  const button = document.getElementById("sendBillButton");
+  button.disabled = true;
+  setSendStatus("Saving bill to Google Sheets...");
+
+  // Open immediately from the click handler so popup blockers do not reject it.
+  const whatsappWindow = window.open("about:blank", "_blank");
+  try {
+    const saved = await saveBillToGoogleSheets();
+    setSendStatus(saved ? "Bill sent to Google Sheets. Opening WhatsApp..." : "Opening WhatsApp without a Sheets save.", !saved);
+  } catch (err) {
+    console.error("Failed to post bill to Google Sheets:", err);
+    setSendStatus("Could not reach Google Sheets. Opening WhatsApp anyway.", true);
+  }
+
   const url = "https://wa.me/" + OWNER_WHATSAPP + "?text=" + encodeURIComponent(whatsappMessage());
-  window.open(url, "_blank");
+  if (whatsappWindow) whatsappWindow.location.href = url;
+  else window.open(url, "_blank");
+  button.disabled = false;
+  isSending = false;
 }
 function clearItems() {
   if (!confirm("Remove all items?")) return;
@@ -402,6 +455,7 @@ function newBill() {
   document.getElementById("billPreview").style.display = "none";
   document.getElementById("customerName").value = "";
   document.getElementById("customerPhone").value = "";
+  document.getElementById("cashier").value = "";
   document.getElementById("discount").value = "0";
   document.getElementById("itemsBody").innerHTML = "";
   setHeader(); addItem();
